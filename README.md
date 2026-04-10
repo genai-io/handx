@@ -5,12 +5,12 @@
 HandX lets you manage tmux sessions on your dev machine from anywhere. Run long tasks on your server, then pick up your phone to check progress, send commands, or switch windows — all through a WebSocket connection.
 
 <p align="center">
-  <img src="docs/screenshots/home-sessions.jpg" alt="Session List — manage all tmux sessions" width="220" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="docs/screenshots/terminal-live.jpg" alt="Live Terminal — real-time tmux interaction" width="220" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/home-sessions.jpg" alt="Session List — manage all tmux sessions" width="220" />
 </p>
 <p align="center">
-  <em>Left: Session list with connection status &nbsp;|&nbsp; Right: Live terminal with real-time output</em>
+  <em>Left: Live terminal &nbsp;|&nbsp; Right: Session list</em>
 </p>
 
 ```
