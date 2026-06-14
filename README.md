@@ -2,7 +2,7 @@
 
 > *Hand of Developer* — Inspired by "Hand of the King" from Game of Thrones
 
-HandX lets you manage tmux sessions on your dev machine from anywhere. Run long tasks on your server, then pick up your phone to check progress, send commands, or switch windows — all through a WebSocket connection.
+HandX lets you manage tmux sessions on your dev machine from anywhere. Run long tasks on your server, then open the web UI on your phone to check progress, send commands, or switch windows — all through a WebSocket connection.
 
 <p align="center">
   <img src="docs/screenshots/terminal-live.jpg" alt="Live Terminal" width="180" />
@@ -18,13 +18,12 @@ HandX lets you manage tmux sessions on your dev machine from anywhere. Run long 
 ┌──────────────┐                 │  Dev Machine             │
 │  Phone       │                 │                          │
 │  - Browser   │◄── Tailscale ──▶│  Server (Go :8080)       │
-│  - iOS App   │    WebSocket    │    └─ tmux manager       │
-└──────────────┘                 │                          │
-                                 │  Web UI (Next.js :3000)  │
-┌──────────────┐                 │    └─ terminal frontend  │
-│  Desktop     │◄── localhost ──▶│                          │
-│  - Browser   │                 └──────────────────────────┘
-└──────────────┘
+└──────────────┘    WebSocket    │    └─ tmux manager       │
+                                 │                          │
+┌──────────────┐                 │  Web UI (Next.js :3000)  │
+│  Desktop     │◄── localhost ──▶│    └─ terminal frontend  │
+│  - Browser   │                 │                          │
+└──────────────┘                 └──────────────────────────┘
 ```
 
 ## Project Structure
@@ -32,7 +31,6 @@ HandX lets you manage tmux sessions on your dev machine from anywhere. Run long 
 ```
 server/         Go WebSocket server — tmux session management, auth, QR code
 web/            Next.js frontend — mobile-optimized terminal UI (PWA)
-HandX/          iOS native app (SwiftUI, WIP) — QR scan to connect, native terminal
 start.sh        One-command launcher for server + web
 ```
 
@@ -121,10 +119,6 @@ http://<tailscale-ip>:3000
 ```
 
 Tap a session to connect, use the floating keyboard to type commands.
-
-### iOS App (WIP)
-
-Open the `HandX/` Xcode project and run on your device. Scan the QR code printed by the server to connect — no manual IP entry needed.
 
 ## Server Configuration
 

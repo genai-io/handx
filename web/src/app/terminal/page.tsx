@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { WebSocketClient } from '@/lib/websocket';
 import {
@@ -31,6 +31,7 @@ export default function TerminalPage() {
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const outputIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastActivityRef = useRef<number>(0); // Timestamp of last output change/command (drives adaptive poll rate)
   const lastOutputRef = useRef<string>(''); // Track last output for diff
   const isMobileRef = useRef<boolean>(false); // Ref for mobile detection (for closures)
   const scrollbackLinesRef = useRef<number>(50); // Ref for scrollback lines (for closures)
@@ -174,6 +175,23 @@ export default function TerminalPage() {
       textMuted: 'text-[#4b5563]',
     },
   };
+
+  // Pre-render the mobile terminal HTML. Memoized so it only re-runs the
+  // (expensive) full-buffer ANSI→HTML conversion when the output/theme/wrap
+  // actually change — NOT on every keystroke in the command box.
+  const terminalHtml = useMemo(() => {
+    const convert = new Convert({
+      fg: themes[theme].terminal.foreground,
+      bg: themes[theme].terminal.background,
+      newline: true,
+      escapeXML: true,
+      stream: false,
+    });
+    const output = wrapMode === 'wrap'
+      ? removeSeparatorLines(terminalOutput || '')
+      : (terminalOutput || '');
+    return convert.toHtml(output);
+  }, [terminalOutput, theme, wrapMode]);
 
   // Detect mobile device and load settings
   useEffect(() => {
@@ -592,27 +610,41 @@ export default function TerminalPage() {
 
       if (payload.output) {
         // Only update if output has changed (diff optimization)
-        if (payload.output !== lastOutputRef.current) {
-          let output = payload.output;
-
-          // Limit output based on scrollbackLines setting (always apply the limit)
-          if (scrollbackLinesRef.current > 0) {
-            const lines = output.split('\n');
-            if (lines.length > scrollbackLinesRef.current) {
-              output = lines.slice(-scrollbackLinesRef.current).join('\n');
-            }
-          }
+        const prev = lastOutputRef.current;
+        const next = payload.output;
+        if (next !== prev) {
+          // New output arrived — keep polling fast while it's still streaming
+          markActivity();
 
           if (isMobileRef.current) {
-            // For mobile: update state
+            // For mobile: apply scrollback limit and replace state
+            let output = next;
+            if (scrollbackLinesRef.current > 0) {
+              const lines = output.split('\n');
+              if (lines.length > scrollbackLinesRef.current) {
+                output = lines.slice(-scrollbackLinesRef.current).join('\n');
+              }
+            }
             setTerminalOutput(output);
           } else if (xtermRef.current) {
-            // For desktop: update xterm.js
-            xtermRef.current.clear();
-            xtermRef.current.write(output);
+            // For desktop: append only the new tail when output grew by
+            // appending (avoids full clear+repaint flicker); otherwise repaint.
+            if (prev && next.startsWith(prev)) {
+              xtermRef.current.write(next.slice(prev.length));
+            } else {
+              let output = next;
+              if (scrollbackLinesRef.current > 0) {
+                const lines = output.split('\n');
+                if (lines.length > scrollbackLinesRef.current) {
+                  output = lines.slice(-scrollbackLinesRef.current).join('\n');
+                }
+              }
+              xtermRef.current.clear();
+              xtermRef.current.write(output);
+            }
           }
           // Update last output
-          lastOutputRef.current = payload.output;
+          lastOutputRef.current = next;
         }
       }
     });
@@ -722,28 +754,42 @@ export default function TerminalPage() {
     };
   }, [router]);
 
+  // Adaptive output polling: poll fast right after activity (command sent or
+  // output still changing), then relax to a slow idle rate to save resources.
+  const FAST_POLL_MS = 250;
+  const SLOW_POLL_MS = 1000;
+  const ACTIVE_WINDOW_MS = 3000; // Stay in fast mode for this long after last change
+
+  // Mark "activity" so the poller switches to (or stays in) fast mode.
+  const markActivity = () => {
+    lastActivityRef.current = Date.now();
+  };
+
   // Start/stop output capture
   const startOutputCapture = (sessionName: string) => {
     if (!ws) return;
 
-    // Stop existing interval
+    // Stop existing loop
     stopOutputCapture();
 
     // Reset last output when switching sessions (for diff optimization)
     lastOutputRef.current = '';
+    markActivity(); // Begin in fast mode so the first frames feel instant
 
-    // Start new interval to capture output every 1 second
-    outputIntervalRef.current = setInterval(() => {
+    const tick = () => {
       ws.send(MessageType.CAPTURE_OUTPUT, { session_name: sessionName, window_index: activeWindowIndexRef.current });
-    }, 1000);
+      const sinceActivity = Date.now() - lastActivityRef.current;
+      const delay = sinceActivity < ACTIVE_WINDOW_MS ? FAST_POLL_MS : SLOW_POLL_MS;
+      outputIntervalRef.current = setTimeout(tick, delay);
+    };
 
-    // Capture immediately
-    ws.send(MessageType.CAPTURE_OUTPUT, { session_name: sessionName, window_index: activeWindowIndexRef.current });
+    // Capture immediately, then schedule adaptively
+    tick();
   };
 
   const stopOutputCapture = () => {
     if (outputIntervalRef.current) {
-      clearInterval(outputIntervalRef.current);
+      clearTimeout(outputIntervalRef.current);
       outputIntervalRef.current = null;
     }
   };
@@ -892,12 +938,13 @@ export default function TerminalPage() {
 
     setCommand('');
 
-    // Capture output after a short delay
+    // Switch the poller to fast mode and grab output quickly for instant feedback
+    markActivity();
     setTimeout(() => {
       if (ws && selectedSession) {
         ws.send(MessageType.CAPTURE_OUTPUT, { session_name: selectedSession.name, window_index: activeWindowIndex });
       }
-    }, 300);
+    }, 120);
   };
 
   // Handle Enter key press
@@ -1500,22 +1547,7 @@ export default function TerminalPage() {
                     overflowWrap: wrapMode === 'wrap' ? 'anywhere' : 'normal',
                     padding: '12px',
                   }}
-                  dangerouslySetInnerHTML={{
-                    __html: (() => {
-                      const convert = new Convert({
-                        fg: themes[theme].terminal.foreground,
-                        bg: themes[theme].terminal.background,
-                        newline: true,
-                        escapeXML: true,
-                        stream: false,
-                      });
-                      // Remove separator lines when wrap mode is on
-                      const output = wrapMode === 'wrap'
-                        ? removeSeparatorLines(terminalOutput || '')
-                        : (terminalOutput || '');
-                      return convert.toHtml(output);
-                    })(),
-                  }}
+                  dangerouslySetInnerHTML={{ __html: terminalHtml }}
                 />
               </div>
             ) : (
